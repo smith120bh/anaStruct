@@ -5,7 +5,7 @@ import numpy as np
 from functools import lru_cache
 import copy
 
-from typing import TYPE_CHECKING, Dict, Optional, List
+from typing import TYPE_CHECKING, Dict, Optional, List, Union, Sequence
 
 if TYPE_CHECKING:
     from anastruct.vertex import Vertex
