@@ -1,5 +1,6 @@
 import math, re, collections, copy
 import numpy as np
+import scipy as sp
 from anastruct.basic import FEMException, args_to_lists
 from anastruct.fem.postprocess import SystemLevel as post_sl
 from anastruct.fem.elements import Element
@@ -138,6 +139,7 @@ class SystemElements:
         # Objects state
         self.count = 0
         self.system_matrix: Optional[np.ndarray] = None
+        self.system_mass_matrix: Optional[np.ndarray] = None
         self.system_force_vector: Optional[np.ndarray] = None
         self.system_displacement_vector: Optional[np.ndarray] = None
         self.shape_system_matrix: Optional[
@@ -145,6 +147,7 @@ class SystemElements:
         ] = None  # actually is the size of the square system matrix
         self.reduced_force_vector: Optional[np.ndarray] = None
         self.reduced_system_matrix: Optional[np.ndarray] = None
+        self.reduced_system_mass_matrix: Optional[np.ndarray] = None
         self._vertices: Dict[Vertex, int] = {}  # maps vertices to node ids
 
     @property
@@ -237,6 +240,7 @@ class SystemElements:
         g: float = 0,
         mp: Optional[MpType] = None,
         spring: Optional[Spring] = None,
+        linear_density: float = None,
         **kwargs
     ) -> int:
         """
@@ -331,6 +335,9 @@ class SystemElements:
         EA = cast(float, EA)
         EI = cast(float, EI)
 
+        if linear_density is None:
+            linear_density = g / 9.8
+
         # add element
         element = Element(
             id_=self.count,
@@ -343,6 +350,7 @@ class SystemElements:
             type_=element_type,
             spring=spring,
             section_name=section_name,
+            linear_density=linear_density,
         )
         element.node_id1 = node_id1
         element.node_id2 = node_id2
@@ -701,7 +709,48 @@ class SystemElements:
 
         return self.system_displacement_vector
 
-    def validate(self, min_eigen: float = 1e-9) -> bool:
+    def solve_modal_analysis(self):
+
+        """
+        Compute the results of current model.
+
+        :param force_linear: Force a linear calculation. Even when the system has non linear nodes.
+        :param verbosity: 0. Log calculation outputs. 1. silence.
+        :param max_iter: Maximum allowed iterations.
+        :param geometrical_non_linear: Calculate second order effects and determine the buckling factor.
+        :return: Displacements vector.
+
+        """
+
+        if self.system_displacement_vector is None:
+            system_components.assembly.process_supports(self)
+
+        if not self.validate(modal_analysis=True):
+            if all(
+                ["general" in element.type for element in self.element_map.values()]
+            ):
+                raise FEMException(
+                    "StabilityError",
+                    "The eigenvalues of the stiffness matrix are non zero, "
+                    "which indicates a instable structure. "
+                    "Check your support conditions",
+                )
+
+        system_components.assembly.assemble_system_matrix(self)
+
+        system_components.assembly.assemble_system_mass_matrix(self)
+
+        system_components.assembly.process_conditions(self)
+
+        # solution of the reduced system (reduced due to support conditions)
+        squared_eigen_values, eigen_vectors = sp.linalg.eig(
+            self.reduced_system_matrix, b=self.reduced_system_mass_matrix
+        )
+        natural_frequencies = np.sort(np.sqrt(np.real(squared_eigen_values)))
+
+        return natural_frequencies
+
+    def validate(self, min_eigen: float = 1e-9, modal_analysis: bool = False) -> bool:
         """
         Validate the stability of the stiffness matrix.
 
@@ -711,9 +760,10 @@ class SystemElements:
 
         ss = copy.copy(self)
         system_components.assembly.prep_matrix_forces(ss)
-        assert (
-            np.abs(ss.system_force_vector).sum() != 0
-        ), "There are no forces on the structure"
+        if not modal_analysis:
+            assert (
+                np.abs(ss.system_force_vector).sum() != 0
+            ), "There are no forces on the structure"
         ss._remainder_indexes = []
         system_components.assembly.assemble_system_matrix(ss)
 
@@ -907,7 +957,9 @@ class SystemElements:
         if not isinstance(q, tuple):
             q = (q, q)
         if q[0] != q[1] and direction != "element":
-            raise ValueError("Non-uniform loads are only supported in element direction")
+            raise ValueError(
+                "Non-uniform loads are only supported in element direction"
+            )
         q = [q]
         q, element_id, direction = args_to_lists(q, element_id, direction)
         q = cast(Sequence[list], q)
