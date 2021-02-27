@@ -233,6 +233,54 @@ def assemble_system_matrix(
         assert np.allclose((system.system_matrix.transpose()), system.system_matrix)
 
 
+def assemble_system_mass_matrix(system: "SystemElements"):
+    """
+    Shape of the matrix = n nodes * n d.o.f.
+    Shape = n * 3
+    """
+    system._remainder_indexes = []
+    shape = len(system.node_map) * 3
+    system.shape_system_matrix = shape
+    system.system_mass_matrix = np.zeros((shape, shape))
+
+    # Determine the elements location in the modal matrix.
+    # system matrix [K]
+    #
+    # [mfx 1] [K         |  \ node 1 starts at row 1
+    # |mfz 1] |  K       |  /
+    # |mTy 1] |   K      | /
+    # |mfx 2] |    K     |  \ node 2 starts at row 4
+    # |mfz 2] |     K    |  /
+    # |mTy 2] |      K   | /
+    # |mfx 3] |       K  |  \ node 3 starts at row 7
+    # |mfz 3] |        K |  /
+    # [mTy 3] [         K] /
+    #
+    #         n   n  n
+    #         o   o  o
+    #         d   d  d
+    #         e   e  e
+    #         1   2  3
+    #
+    # thus with appending numbers in the system matrix: column = row
+
+    for i in range(len(system.element_map)):
+        element = system.element_map[i + 1]
+        element_matrix = element.mass_matrix
+
+        # n1 and n2 are starting indexes of the rows and the columns for node 1 and node 2
+        n1 = (element.node_1.id - 1) * 3
+        n2 = (element.node_2.id - 1) * 3
+        system.system_mass_matrix[n1 : n1 + 3, n1 : n1 + 3] += element_matrix[0:3, :3]
+        system.system_mass_matrix[n1 : n1 + 3, n2 : n2 + 3] += element_matrix[0:3, 3:]
+
+        system.system_mass_matrix[n2 : n2 + 3, n1 : n1 + 3] += element_matrix[3:6, :3]
+        system.system_mass_matrix[n2 : n2 + 3, n2 : n2 + 3] += element_matrix[3:6, 3:]
+
+    # returns True if symmetrical.
+    assert np.allclose((system.system_matrix.transpose()), system.system_matrix)
+
+
 def set_displacement_vector(system, nodes_list):
     """
     :param nodes_list: list containing tuples with
@@ -270,9 +318,17 @@ def process_conditions(system):
     system.system_displacement_vector = np.delete(
         system.system_displacement_vector, indexes, 0
     )
-    system.reduced_force_vector = np.delete(system.system_force_vector, indexes, 0)
+    if system.system_force_vector is not None:
+        system.reduced_force_vector = np.delete(system.system_force_vector, indexes, 0)
     system.reduced_system_matrix = np.delete(system.system_matrix, indexes, 0)
     system.reduced_system_matrix = np.delete(system.reduced_system_matrix, indexes, 1)
+    if system.system_mass_matrix is not None:
+        system.reduced_system_mass_matrix = np.delete(
+            system.system_mass_matrix, indexes, 0
+        )
+        system.reduced_system_mass_matrix = np.delete(
+            system.reduced_system_mass_matrix, indexes, 1
+        )
 
 
 def process_supports(system):

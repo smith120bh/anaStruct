@@ -38,6 +38,7 @@ class Element:
         type_: str,
         section_name: str,
         spring: Spring = None,
+        linear_density: float = 0,
     ):
         """
         :param id_: integer representing the elements ID
@@ -56,6 +57,7 @@ class Element:
         self.EA = EA
         self.EI = EI
         self.l = l
+        self.linear_density = linear_density
         self.springs = spring
         self.vertex_1 = vertex_1  # location
         self.vertex_2 = vertex_2  # location
@@ -63,6 +65,7 @@ class Element:
         self.kinematic_matrix = kinematic_matrix(angle, angle, l)
         self.constitutive_matrix: np.ndarray
         self.stiffness_matrix: np.ndarray
+        self.mass_matrix: np.ndarray
         self.node_id1: int
         self.node_id2: int
         self.node_map: Dict[int, Node]
@@ -84,6 +87,7 @@ class Element:
         self.nodes_plastic: List[bool] = [False, False]
         self.compile_constitutive_matrix(EA, EI, l, spring)
         self.compile_stiffness_matrix()
+        self.compile_mass_matrix()
         self.section_name = section_name  # needed for element annotation
 
     @property
@@ -156,6 +160,9 @@ class Element:
         self.constitutive_matrix = constitutive_matrix(
             EA, EI, l, spring, node_1_hinge, node_2_hinge
         )
+
+    def compile_mass_matrix(self):
+        self.mass_matrix = mass_matrix(self.linear_density, self.l)
 
     def update_stiffness(self, factor: float, node: int):
         if node == 1:
@@ -290,6 +297,20 @@ def stiffness_matrix(
         var_kinematic_matrix.transpose(), var_constitutive_matrix
     )
     return np.dot(kinematic_transposed_times_constitutive, var_kinematic_matrix)
+
+
+def mass_matrix(linear_density: float, l: float):
+    matrix = ((linear_density * l) / 420) * np.array(
+        [
+            [140, 0, 0, 70, 0, 0],
+            [0, 156, 22 * l, 0, 54, -13 * l],
+            [0, 22 * l, 4 * l ** 2, 0, 13 * l, -3 * l ** 2],
+            [70, 0, 0, 140, 0, 0],
+            [0, 54, 13 * l, 0, 156, -22 * l],
+            [0, -13 * l, -3 * l ** 2, 0, -22 * l, 4 * l ** 2],
+        ]
+    )
+    return matrix
 
 
 def geometric_stiffness_matrix(l: float, N: float, a1: float, a2: float) -> np.ndarray:
